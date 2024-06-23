@@ -1,7 +1,8 @@
 [build-system]
 requires = [
     "Cython >=0.29.31,<4",
-    "oldest-supported-numpy",
+    "oldest-supported-numpy; python_version=='3.8'",
+    "numpy >=2.0.0rc1; python_version>='3.9'",
     "pkgconfig",
     "setuptools >=61",
 ]
@@ -67,7 +68,7 @@ Homepage = "https://www.h5py.org/"
 Source = "https://github.com/h5py/h5py"
 Documentation = "https://docs.h5py.org/en/stable/"
 "Release notes" = "https://docs.h5py.org/en/stable/whatsnew/index.html"
-"Discussion forum" = "https://forum.hdfgroup.org/c/hdf-tools/h5py"
+"Discussion forum" = "https://forum.hdfgroup.org/c/hdf5/h5py"
 
 [tool.setuptools]
 # to ignore .pxd and .pyx files in wheels

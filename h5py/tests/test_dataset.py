@@ -33,7 +33,7 @@ from h5py.h5py_warnings import H5pyDeprecationWarning
 from h5py import version
 import h5py
 import h5py._hl.selections as sel
-
+from h5py.tests.common import NUMPY_RELEASE_VERSION
 
 class BaseDataset(TestCase):
     def setUp(self):
@@ -695,7 +695,7 @@ class TestCreateScaleOffset(BaseDataset):
         range = 20 * 10 ** scalefac
         testdata = (np.random.rand(*shape) - 0.5) * range
 
-        dset = self.f.create_dataset('foo', shape, dtype=float, scaleoffset=scalefac)
+        dset = self.f.create_dataset('foo', shape, dtype=np.float64, scaleoffset=scalefac)
 
         # Dataset reports that scaleoffset is in use
         assert dset.scaleoffset is not None
@@ -718,10 +718,10 @@ class TestCreateScaleOffset(BaseDataset):
 
         nbits = 12
         shape = (100, 300)
-        testdata = np.random.randint(0, 2 ** nbits - 1, size=shape)
+        testdata = np.random.randint(0, 2 ** nbits - 1, size=shape, dtype=np.int64)
 
         # Create dataset; note omission of nbits (for library-determined precision)
-        dset = self.f.create_dataset('foo', shape, dtype=int, scaleoffset=True)
+        dset = self.f.create_dataset('foo', shape, dtype=np.int64, scaleoffset=True)
 
         # Dataset reports scaleoffset enabled
         assert dset.scaleoffset is not None
@@ -739,9 +739,9 @@ class TestCreateScaleOffset(BaseDataset):
 
         nbits = 12
         shape = (100, 300)
-        testdata = np.random.randint(0, 2 ** nbits, size=shape)
+        testdata = np.random.randint(0, 2 ** nbits, size=shape, dtype=np.int64)
 
-        dset = self.f.create_dataset('foo', shape, dtype=int, scaleoffset=nbits)
+        dset = self.f.create_dataset('foo', shape, dtype=np.int64, scaleoffset=nbits)
 
         # Dataset reports scaleoffset enabled with correct precision
         self.assertTrue(dset.scaleoffset == 12)
@@ -759,9 +759,9 @@ class TestCreateScaleOffset(BaseDataset):
 
         nbits = 12
         shape = (100, 300)
-        testdata = np.random.randint(0, 2 ** (nbits + 1) - 1, size=shape)
+        testdata = np.random.randint(0, 2 ** (nbits + 1) - 1, size=shape, dtype=np.int64)
 
-        dset = self.f.create_dataset('foo', shape, dtype=int, scaleoffset=nbits)
+        dset = self.f.create_dataset('foo', shape, dtype=np.int64, scaleoffset=nbits)
 
         # Dataset reports scaleoffset enabled with correct precision
         self.assertTrue(dset.scaleoffset == 12)
@@ -1785,6 +1785,13 @@ class TestVlen(BaseDataset):
 
         assert all(self.f['nc2'][0] == y[::2]), f"{self.f['nc2'][0]} != {y[::2]}"
 
+    def test_asstr_array_dtype(self):
+        dt = h5py.string_dtype(encoding='ascii')
+        fill_value = b'bar'
+        ds = self.f.create_dataset('x', (100,), dtype=dt, fillvalue=fill_value)
+        with pytest.raises(TypeError):
+            np.array(ds.asstr(), dtype=int)
+
 
 class TestLowOpen(BaseDataset):
 
@@ -2013,3 +2020,34 @@ class TestVirtualPrefix(BaseDataset):
         self.assertEqual(virtual_prefix, virtual_prefix_readback)
         self.assertIsInstance(dset, Dataset)
         self.assertEqual(dset.shape, (10, 3))
+
+
+
+COPY_IF_NEEDED = False if NUMPY_RELEASE_VERSION < (2, 0) else None
+
+VIEW_GETTERS = {
+    "ds": lambda ds: ds,
+    "astype": lambda ds: ds.astype(dtype=object),
+    "asstr": lambda ds: ds.asstr(),
+}
+
+@pytest.mark.parametrize("copy", [True, COPY_IF_NEEDED])
+@pytest.mark.parametrize("view_getter", VIEW_GETTERS.values(), ids=VIEW_GETTERS.keys())
+def test_array_copy(view_getter, copy, writable_file):
+    dt = h5py.string_dtype(encoding='ascii')
+    fill_value = b'bar'
+    ds = writable_file.create_dataset('x', (10,), dtype=dt, fillvalue=fill_value)
+    np.array(view_getter(ds), copy=copy)
+
+@pytest.mark.skipif(
+    NUMPY_RELEASE_VERSION < (2, 0),
+    reason="forbidding copies requires numpy 2",
+)
+@pytest.mark.parametrize("view_getter", VIEW_GETTERS.values(), ids=VIEW_GETTERS.keys())
+def test_array_copy_false(view_getter, writable_file):
+    dt = h5py.string_dtype(encoding='ascii')
+    fill_value = b'bar'
+    ds = writable_file.create_dataset('x', (10,), dtype=dt, fillvalue=fill_value)
+    view = view_getter(ds)
+    with pytest.raises(ValueError):
+        np.array(view, copy=False)

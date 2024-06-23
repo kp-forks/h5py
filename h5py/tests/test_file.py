@@ -213,6 +213,8 @@ class TestPageBuffering(TestCase):
             fapl = f.id.get_access_plist()
             self.assertEqual(fapl.get_page_buffer_size(), (pbs, mm, mr))
 
+    @pytest.mark.skipif(h5py.version.hdf5_version_tuple > (1, 14, 3),
+                        reason='Requires HDF5 <= 1.14.3')
     def test_too_small_pbs(self):
         """Page buffer size must be greater than file space page size."""
         fname = self.mktemp()
@@ -221,6 +223,30 @@ class TestPageBuffering(TestCase):
             pass
         with self.assertRaises(OSError):
             File(fname, mode="r", page_buf_size=fsp-1)
+
+    @pytest.mark.skipif(h5py.version.hdf5_version_tuple < (1, 14, 4),
+                        reason='Requires HDF5 >= 1.14.4')
+    def test_open_nonpage_pbs(self):
+        """Open non-PAGE file with page buffer set."""
+        fname = self.mktemp()
+        fsp = 16 * 1024
+        with File(fname, mode='w'):
+            pass
+        with File(fname, mode='r', page_buf_size=fsp) as f:
+            fapl = f.id.get_access_plist()
+            assert fapl.get_page_buffer_size()[0] == 0
+
+    @pytest.mark.skipif(h5py.version.hdf5_version_tuple < (1, 14, 4),
+                    reason='Requires HDF5 >= 1.14.4')
+    def test_smaller_pbs(self):
+        """Adjust page buffer size automatically when smaller than file page."""
+        fname = self.mktemp()
+        fsp = 16 * 1024
+        with File(fname, mode='w', fs_strategy='page', fs_page_size=fsp):
+            pass
+        with File(fname, mode='r', page_buf_size=fsp-100) as f:
+            fapl = f.id.get_access_plist()
+            assert fapl.get_page_buffer_size()[0] == fsp
 
     def test_actual_pbs(self):
         """Verify actual page buffer size."""
@@ -431,11 +457,15 @@ class TestDrivers(TestCase):
         # Driver must be 'fileobj' for file-like object if specified
         with self.assertRaises(ValueError):
             File(tf, 'w', driver='core')
+        tf.close()
 
     # TODO: family driver tests
 
 
-
+@pytest.mark.skipif(
+    h5py.version.hdf5_version_tuple[1] % 2 != 0 ,
+    reason='Not HDF5 release version'
+)
 class TestNewLibver(TestCase):
 
     """
@@ -923,8 +953,14 @@ class TestFileLocking:
             with h5py.File(fname, mode="r", locking=True) as h5f_read:
                 pass
 
-            with h5py.File(fname, mode="r", locking='best-effort') as h5f_read:
-                pass
+            if h5py.version.hdf5_version_tuple < (1, 14, 4):
+                with h5py.File(fname, mode="r", locking='best-effort') as h5f_read:
+                    pass
+            else:
+                with pytest.raises(OSError):
+                    with h5py.File(fname, mode="r", locking='best-effort') as h5f_read:
+                        pass
+
 
     def test_unsupported_locking(self, tmp_path):
         """Test with erroneous file locking value"""
@@ -962,6 +998,43 @@ f = h5py.File({str(filename)!r}, mode={mode!r}, locking={locking})
         with h5py.File(fname, mode="r", locking=False) as f:
             # Opening in write mode with locking is expected to work
             assert open_in_subprocess(fname, mode="w", locking=True)
+
+
+@pytest.mark.skipif(
+    h5py.version.hdf5_version_tuple < (1, 14, 4),
+    reason="Requires HDF5 >= 1.14.4",
+)
+@pytest.mark.skipif(
+    "HDF5_USE_FILE_LOCKING" in os.environ,
+    reason="HDF5_USE_FILE_LOCKING env. var. is set",
+)
+@pytest.mark.parametrize(
+    'locking_arg,file_locking_props',
+    [
+        (False, (0, 0)),
+        (True, (1, 0)),
+        ('best-effort', (1, 1)),
+    ]
+)
+def test_file_locking_external_link(tmp_path, locking_arg, file_locking_props):
+    """Test that same file locking is used for external link"""
+    fname_main = tmp_path / "test_main.h5"
+    fname_elink = tmp_path / "test_linked.h5"
+
+    # Create test files
+    with h5py.File(fname_elink, "w") as f:
+        f["data"] = 1
+    with h5py.File(fname_main, "w") as f:
+        f["link"] = h5py.ExternalLink(fname_elink, "/data")
+
+    with h5py.File(fname_main, "r", locking=locking_arg) as f:
+        locking_info = f.id.get_access_plist().get_file_locking()
+        assert locking_info == file_locking_props
+
+        # Test that external link file is also opened without file locking
+        elink_dataset = f["link"]
+        elink_locking_info = elink_dataset.file.id.get_access_plist().get_file_locking()
+        assert elink_locking_info == file_locking_props
 
 
 def test_close_gc(writable_file):
